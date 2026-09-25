@@ -2,9 +2,11 @@ package httpapi
 
 import (
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"leaddesk/api/internal/lead"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -20,7 +22,9 @@ func (s *Server) importHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	raw := input.CSV
+	source := "csv"
 	if input.URL != "" {
+		source = "google_sheet"
 		sheetURL, err := googleSheetsCSVURL(input.URL)
 		if err != nil {
 			writeJSON(w, map[string]string{"error": err.Error()}, 400)
@@ -33,12 +37,14 @@ func (s *Server) importHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		defer response.Body.Close()
 		if response.StatusCode < 200 || response.StatusCode >= 300 {
+			log.Printf("import source=%s download_status=%d", source, response.StatusCode)
 			writeJSON(w, map[string]string{"error": fmt.Sprintf("Google Sheets returned HTTP %d; publish the sheet to the web as CSV and try again", response.StatusCode)}, 400)
 			return
 		}
 		data, _ := io.ReadAll(io.LimitReader(response.Body, 10<<20))
 		raw = string(data)
 	}
+	log.Printf("import started source=%s bytes=%d", source, len(raw))
 	records, err := csv.NewReader(strings.NewReader(raw)).ReadAll()
 	if err != nil || len(records) < 2 {
 		writeJSON(w, map[string]string{"error": "provide a CSV with a header row and at least one data row; Google Sheets must be published as CSV"}, 400)
@@ -61,16 +67,31 @@ func (s *Server) importHandler(w http.ResponseWriter, r *http.Request) {
 		return ""
 	}
 	imported := 0
+	skipped := 0
+	empty := 0
+	duplicates := 0
+	invalid := 0
 	for _, row := range records[1:] {
 		input := lead.Input{Name: value(row, "name"), Email: value(row, "email"), Phone: value(row, "phone"), Category: value(row, "category"), Subcategory: value(row, "subcategory")}
 		if input.Email == "" && input.Phone == "" {
+			skipped++
+			empty++
 			continue
 		}
 		if _, err := s.leads.Create(input); err == nil {
 			imported++
+		} else {
+			skipped++
+			if errors.Is(err, lead.ErrInvalidEmail) {
+				invalid++
+			} else {
+				duplicates++
+			}
+			log.Printf("import row skipped email=%t phone=%t error=%v", input.Email != "", input.Phone != "", err)
 		}
 	}
-	writeJSON(w, map[string]int{"imported": imported, "rows": len(records) - 1}, 200)
+	log.Printf("import complete source=%s rows=%d imported=%d skipped=%d duplicates=%d empty=%d invalid=%d", source, len(records)-1, imported, skipped, duplicates, empty, invalid)
+	writeJSON(w, map[string]int{"imported": imported, "rows": len(records) - 1, "skipped": skipped, "duplicates": duplicates, "empty": empty, "invalid": invalid}, 200)
 }
 
 func googleSheetsCSVURL(rawURL string) (string, error) {

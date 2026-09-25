@@ -2,11 +2,14 @@ package lead
 
 import (
 	"database/sql"
+	"errors"
 	"net/mail"
 	"strings"
 )
 
 const selectLeads = `SELECT id,name,email,phone,category,subcategory,mail_sent,is_invalid,is_opened,any_followup,followup_count,replied,created_at FROM leads`
+
+var ErrInvalidEmail = errors.New("invalid email address")
 
 type Repository struct{ db *sql.DB }
 
@@ -15,13 +18,13 @@ func NewRepository(db *sql.DB) *Repository { return &Repository{db: db} }
 func (r *Repository) Create(input Input) (int64, error) {
 	input.Email = strings.TrimSpace(strings.ToLower(input.Email))
 	input.Phone = strings.TrimSpace(input.Phone)
-	invalid := 0
 	if input.Email != "" {
-		if _, err := mail.ParseAddress(input.Email); err != nil {
-			invalid = 1
+		parsed, err := mail.ParseAddress(input.Email)
+		if err != nil || parsed.Address != input.Email || len(input.Email) > 254 {
+			return 0, ErrInvalidEmail
 		}
 	}
-	result, err := r.db.Exec(`INSERT INTO leads(name,email,phone,category,subcategory,is_invalid) VALUES(?,?,?,?,?,?)`, input.Name, input.Email, input.Phone, input.Category, input.Subcategory, invalid)
+	result, err := r.db.Exec(`INSERT INTO leads(name,email,phone,category,subcategory,is_invalid) VALUES(?,?,?,?,?,0)`, input.Name, input.Email, input.Phone, input.Category, input.Subcategory)
 	if err != nil {
 		return 0, err
 	}

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"errors"
 	"leaddesk/api/internal/lead"
 	"net/http"
 	"strconv"
@@ -31,6 +32,10 @@ func (s *Server) createLead(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := s.leads.Create(input)
 	if err != nil {
+		if errors.Is(err, lead.ErrInvalidEmail) {
+			writeJSON(w, map[string]string{"error": "invalid email address"}, 400)
+			return
+		}
 		writeJSON(w, map[string]string{"error": "A lead with this email or phone already exists"}, 409)
 		return
 	}
