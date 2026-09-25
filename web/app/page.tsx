@@ -85,7 +85,7 @@ function LeadsTab({ stats, query, setQuery, onSearch, onSubmit, leads, onSelect 
 }
 
 function ImportSummaryPanel({ summary, onDismiss }: { summary: ImportSummary; onDismiss: () => void }) {
-  const details = [[summary.duplicates, 'duplicates'], [summary.empty, 'empty'], [summary.invalid, 'invalid']].filter(([count]) => count > 0);
+  const details = ([[summary.duplicates, 'duplicates'], [summary.empty, 'empty'], [summary.invalid, 'invalid']] as Array<[number, string]>).filter(([count]) => count > 0);
 
   return <aside className="import-summary" role="status" aria-live="polite" aria-atomic="true">
     <div className="summary-heading">
