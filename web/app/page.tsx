@@ -68,7 +68,7 @@ export default function Home() {
       {tab === 'import' && importSummary && <ImportSummaryPanel summary={importSummary} onDismiss={() => setImportSummary(null)}/>} 
       {tab === 'leads' && <LeadsTab stats={stats} query={query} setQuery={setQuery} onSearch={() => refresh()} onSubmit={addLead} leads={leads} onSelect={setSelectedLead}/>} 
       {tab === 'import' && <ImportTab onSubmit={importLeads}/>} 
-      {tab === 'automation' && <AutomationTab onSubmit={sendCampaign}/>} 
+      {tab === 'automation' && <AutomationTab leads={leads} onSubmit={sendCampaign}/>} 
     </section>
     {selectedLead && <LeadDetails lead={selectedLead} onClose={() => setSelectedLead(null)} onChanged={changed}/>} 
   </main>;
@@ -85,7 +85,19 @@ function LeadsTab({ stats, query, setQuery, onSearch, onSubmit, leads, onSelect 
 }
 
 function ImportSummaryPanel({ summary, onDismiss }: { summary: ImportSummary; onDismiss: () => void }) {
-  return <aside className="import-summary" aria-live="polite"><div className="summary-heading"><div className="summary-title"><span className="summary-status" aria-hidden="true">✓</span><div><span className="summary-kicker">IMPORT COMPLETE</span><h3>{summary.imported} of {summary.rows} rows added</h3></div></div><button className="icon-button" onClick={onDismiss} aria-label="Dismiss import summary">×</button></div><div className="summary-stats"><div><b>{summary.imported}</b><span>Added</span></div><div><b>{summary.skipped}</b><span>Skipped</span></div></div><div className="summary-breakdown"><span>{summary.duplicates} duplicates</span><span>{summary.empty} empty</span><span>{summary.invalid} invalid</span></div></aside>;
+  const details = [[summary.duplicates, 'duplicates'], [summary.empty, 'empty'], [summary.invalid, 'invalid']].filter(([count]) => count > 0);
+
+  return <aside className="import-summary" role="status" aria-live="polite" aria-atomic="true">
+    <div className="summary-heading">
+      <div className="summary-title"><span className="summary-status" aria-hidden="true">✓</span><div><span className="summary-kicker">IMPORT COMPLETE</span><h3>{summary.imported} of {summary.rows} rows added</h3></div></div>
+      <button className="icon-button" onClick={onDismiss} aria-label="Dismiss import summary">×</button>
+    </div>
+    <div className="summary-stats">
+      <div><b>{summary.imported}</b><span>Added</span></div>
+      <div><b>{summary.skipped}</b><span>Skipped</span></div>
+    </div>
+    {details.length > 0 && <div className="summary-breakdown">{details.map(([count, label]) => <span key={label}><b>{count}</b> {label}</span>)}</div>}
+  </aside>;
 }
 
 function ImportTab({ onSubmit }: { onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
@@ -120,5 +132,39 @@ function ImportTab({ onSubmit }: { onSubmit: (event: FormEvent<HTMLFormElement>)
     </form>
   </div>;
 }
-function AutomationTab({ onSubmit }: { onSubmit: (event: FormEvent<HTMLFormElement>) => void }) { return <div className="panel"><h2>Send a campaign</h2><p>Initial sends target uncontacted valid leads. Follow-ups target valid leads that were emailed but have not replied.</p><form onSubmit={onSubmit}><select name="mode"><option value="initial">Initial email</option><option value="followup">Follow-up email</option></select><input name="category" placeholder="Optional category filter"/><input name="before" type="date"/><label className="check"><input name="noFollowup" value="true" type="checkbox"/> Only leads with no follow-up</label><input name="maxFollowups" type="number" min="0" placeholder="Maximum follow-ups per lead"/><input required name="subject" placeholder="Email subject"/><textarea required name="body" placeholder="Write your email…"/><button>Send now</button></form><p className="muted">Without Resend credentials, sends are safely simulated and recorded locally.</p></div>; }
+function AutomationTab({ leads, onSubmit }: { leads: Lead[]; onSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void> }) {
+  const [mode, setMode] = useState<'initial' | 'followup'>('initial');
+  const [category, setCategory] = useState('');
+  const [before, setBefore] = useState('');
+  const [noFollowup, setNoFollowup] = useState(false);
+  const [maxFollowups, setMaxFollowups] = useState('');
+  const [subject, setSubject] = useState('');
+  const [body, setBody] = useState('');
+  const [sending, setSending] = useState(false);
+  const categories = Array.from(new Set(leads.map(lead => lead.category).filter(Boolean))).sort();
+  const eligible = leads.filter(lead => {
+    if (lead.isInvalid || lead.replied || !lead.email) return false;
+    if (mode === 'initial' ? lead.mailSent : !lead.mailSent) return false;
+    if (category && lead.category !== category) return false;
+    if (before && lead.createdAt.slice(0, 10) > before) return false;
+    if (noFollowup && lead.anyFollowup) return false;
+    if (mode === 'followup' && maxFollowups && lead.followupCount >= Number(maxFollowups)) return false;
+    return true;
+  });
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSending(true);
+    try { await onSubmit(event); } finally { setSending(false); }
+  }
+
+  return <div className="automation-page">
+    <form className="automation-form" onSubmit={submit}>
+      <section className="automation-section campaign-section"><div className="section-label"><span>01</span><b>Campaign type</b></div><div className="campaign-modes"><button type="button" className={mode === 'initial' ? 'mode-card active' : 'mode-card'} onClick={() => setMode('initial')}><strong>Initial email</strong><span>Uncontacted leads</span></button><button type="button" className={mode === 'followup' ? 'mode-card active' : 'mode-card'} onClick={() => setMode('followup')}><strong>Follow-up</strong><span>Non-replied leads</span></button></div><input type="hidden" name="mode" value={mode}/></section>
+      <section className="automation-section"><div className="section-label"><span>02</span><b>Audience</b></div><div className="automation-table"><div className="automation-row automation-head"><span>Filter</span><span>Value</span><span>Meaning</span></div><div className="automation-row"><b>Category</b><select name="category" value={category} onChange={event => setCategory(event.target.value)}><option value="">All categories</option>{categories.map(value => <option key={value} value={value}>{value}</option>)}</select><small>Only leads in this category</small></div><div className="automation-row"><b>Created before</b><input name="before" type="date" value={before} onChange={event => setBefore(event.target.value)}/><small>Leads created on or before this date</small></div>{mode === 'followup' && <div className="automation-row"><b>Follow-up limit</b><input name="maxFollowups" type="number" min="1" placeholder="No limit" value={maxFollowups} onChange={event => setMaxFollowups(event.target.value)}/><small>Exclude leads at this follow-up count</small></div>}<div className="automation-row"><b>No follow-up yet</b><label className="table-check"><input name="noFollowup" value="true" type="checkbox" checked={noFollowup} onChange={event => setNoFollowup(event.target.checked)}/><span>{noFollowup ? 'On' : 'Off'}</span></label><small>Exclude leads already followed up</small></div></div></section>
+      <section className="automation-section composer-section"><div className="section-label"><span>03</span><b>Message</b></div><label>Subject<input required name="subject" value={subject} onChange={event => setSubject(event.target.value)} placeholder="Subject"/></label><label>Body<textarea required name="body" value={body} onChange={event => setBody(event.target.value)} placeholder="Write your message..."/><small className="character-count">{body.length}</small></label></section>
+      <section className="send-review"><div><strong>{eligible.length} eligible {eligible.length === 1 ? 'lead' : 'leads'}</strong></div><button type="submit" disabled={sending || !eligible.length || !subject.trim() || !body.trim()}>{sending ? 'Sending...' : 'Send campaign'}</button></section>
+    </form>
+  </div>;
+}
 function message(error: unknown) { return error instanceof Error ? error.message : 'Request failed'; }
